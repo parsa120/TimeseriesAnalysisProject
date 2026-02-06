@@ -1,10 +1,19 @@
 import { useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { useOutletContext, useNavigate } from "react-router-dom";
 import FileUploadArea from "../components/FileUploadArea";
 import AnalysisControls from "../components/AnalysisControls";
 import ResultsDisplay from "../components/ResultsDisplay";
+import ARParameterEstimationControls from "../components/ARParameterEstimationControls";
+import ARParametersDisplay from "../components/ARParametersDisplay";
 import TimeSeriesChart from "../components/TimeSeriesChart";
 import { Button } from "../components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import type { TimeSeriesData, AnalysisResults } from "../utils/types";
 import * as XLSX from "xlsx";
 
@@ -16,6 +25,7 @@ interface ContextType {
 
 export default function TimeSeriesPage() {
   const { isDarkMode } = useOutletContext<ContextType>();
+  const navigate = useNavigate();
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [timeSeriesData, setTimeSeriesData] = useState<TimeSeriesData | null>(
     null
@@ -23,18 +33,27 @@ export default function TimeSeriesPage() {
   const [analysisResults, setAnalysisResults] =
     useState<AnalysisResults | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
-  const [differencedData, setDifferencedData] = useState<TimeSeriesData | null>(
-    null
-  );
-  const [differencedResults, setDifferencedResults] =
-    useState<AnalysisResults | null>(null);
+  const [differencedDataStack, setDifferencedDataStack] = useState<
+    Array<{ data: TimeSeriesData; results: AnalysisResults }>
+  >([]);
   const [isDifferencing, setIsDifferencing] = useState(false);
+  const [arOrder, setArOrder] = useState<number>(1);
+  const [isEstimatingAR, setIsEstimatingAR] = useState(false);
+
+
+  // Get the current data being analyzed (most recent differenced data or original)
+  const currentData = differencedDataStack.length > 0 
+    ? differencedDataStack[differencedDataStack.length - 1].data 
+    : timeSeriesData;
+  
+  const currentResults = differencedDataStack.length > 0 
+    ? differencedDataStack[differencedDataStack.length - 1].results 
+    : analysisResults;
 
   const handleFileUpload = async (file: File) => {
     setUploadedFile(file);
     setAnalysisResults(null);
-    setDifferencedData(null);
-    setDifferencedResults(null);
+    setDifferencedDataStack([]);
 
     try {
       let csvContent: string;
@@ -74,6 +93,7 @@ export default function TimeSeriesPage() {
     if (!timeSeriesData) return;
 
     setIsCalculating(true);
+    setArOrder(1);
 
     try {
       const response = await fetch(`${API_BASE_URL}/analyze`, {
@@ -110,7 +130,7 @@ export default function TimeSeriesPage() {
         console.error("Error fetching AI feedback:", aiError);
       }
 
-      setAnalysisResults(results);
+      setAnalysisResults({ ...results, arParameters: undefined });
     } catch (error) {
       console.error("Error analyzing data:", error);
       alert("خطا در محاسبه. لطفاً دوباره تلاش کنید.");
@@ -120,9 +140,10 @@ export default function TimeSeriesPage() {
   };
 
   const handleDifference = async () => {
-    if (!timeSeriesData) return;
+    if (!currentData) return;
 
     setIsDifferencing(true);
+    setArOrder(1);
 
     try {
       const response = await fetch(`${API_BASE_URL}/difference`, {
@@ -131,8 +152,8 @@ export default function TimeSeriesPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          values: timeSeriesData.values,
-          labels: timeSeriesData.labels,
+          values: currentData.values,
+          labels: currentData.labels,
         }),
       });
 
@@ -141,13 +162,77 @@ export default function TimeSeriesPage() {
       }
 
       const result = await response.json();
-      setDifferencedData(result.data);
-      setDifferencedResults(result.analysis);
+      
+      // Add new differenced data to the stack
+      setDifferencedDataStack((prevStack) => [
+        ...prevStack,
+        {
+          data: result.data,
+          results: { ...result.analysis, arParameters: undefined },
+        },
+      ]);
     } catch (error) {
       console.error("Error differencing data:", error);
       alert("خطا در دیفرانسیل گیری. لطفاً دوباره تلاش کنید.");
     } finally {
       setIsDifferencing(false);
+    }
+  };
+
+  const handleEstimateAR = async (order: number) => {
+    // Determine which data to use - differenced or original
+    const dataToUse = currentData;
+    if (!dataToUse) return;
+
+    setIsEstimatingAR(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/estimate-ar-parameters`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          values: dataToUse.values,
+          order: order,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("خطا در تخمین پارامترهای AR");
+      }
+
+      const results = await response.json();
+
+      // Update the appropriate results object based on which data is being analyzed
+      if (differencedDataStack.length > 0) {
+        // Update the most recent differenced results
+        setDifferencedDataStack((prevStack) => {
+          const newStack = [...prevStack];
+          newStack[newStack.length - 1] = {
+            ...newStack[newStack.length - 1],
+            results: {
+              ...newStack[newStack.length - 1].results,
+              arParameters: results,
+            },
+          };
+          return newStack;
+        });
+      } else {
+        // Update original analysis results
+        setAnalysisResults((prevResults) => {
+          if (!prevResults) return prevResults;
+          return {
+            ...prevResults,
+            arParameters: results,
+          };
+        });
+      }
+    } catch (error) {
+      console.error("Error estimating AR parameters:", error);
+      alert("خطا در تخمین پارامترهای AR");
+    } finally {
+      setIsEstimatingAR(false);
     }
   };
 
@@ -186,8 +271,7 @@ export default function TimeSeriesPage() {
                   setUploadedFile(null);
                   setTimeSeriesData(null);
                   setAnalysisResults(null);
-                  setDifferencedData(null);
-                  setDifferencedResults(null);
+                  setDifferencedDataStack([]);
                 }}
                 className={`text-sm mt-2 ${
                   isDarkMode ? "text-blue-400" : "text-blue-600"
@@ -220,6 +304,19 @@ export default function TimeSeriesPage() {
                 results={analysisResults}
                 isDarkMode={isDarkMode}
               />
+              <ARParameterEstimationControls
+                onEstimate={handleEstimateAR}
+                isDarkMode={isDarkMode}
+                isEstimating={isEstimatingAR}
+                selectedOrder={arOrder}
+                onOrderChange={setArOrder}
+              />
+              {analysisResults.arParameters && (
+                <ARParametersDisplay
+                  parameters={analysisResults.arParameters}
+                  isDarkMode={isDarkMode}
+                />
+              )}
               <div className="flex justify-center gap-4">
                 <Button
                   onClick={handleCalculate}
@@ -250,34 +347,69 @@ export default function TimeSeriesPage() {
                 >
                   {isDifferencing ? "در حال پردازش..." : "دیفرانسیل گیری"}
                 </Button>
+                <Button
+                  onClick={() => navigate("/ar-generation")}
+                  variant="outline"
+                  className={`
+                    rounded-lg
+                    ${
+                      isDarkMode
+                        ? "border-gray-700 text-gray-300 hover:bg-gray-800"
+                        : "border-gray-300 text-gray-700 hover:bg-gray-50"
+                    }
+                  `}
+                >
+                  تولید و تحلیل داده AR تصادفی
+                </Button>
               </div>
             </>
           )}
 
-          {differencedData && differencedResults && (
+          {differencedDataStack.length > 0 && (
             <>
-              <div
-                className={`border-t pt-12 ${
-                  isDarkMode ? "border-gray-800" : "border-gray-200"
-                }`}
-              >
-                <h2
-                  className={`text-2xl font-bold mb-6 text-center ${
-                    isDarkMode ? "text-white" : "text-gray-900"
-                  }`}
-                >
-                  داده‌های دیفرانسیل شده
-                </h2>
-                <TimeSeriesChart
-                  data={differencedData}
-                  results={differencedResults}
-                  isDarkMode={isDarkMode}
-                />
-              </div>
-              <ResultsDisplay
-                results={differencedResults}
-                isDarkMode={isDarkMode}
-              />
+              {differencedDataStack.map((item, index) => (
+                <div key={index}>
+                  <div
+                    className={`border-t pt-12 ${
+                      isDarkMode ? "border-gray-800" : "border-gray-200"
+                    }`}
+                  >
+                    <h2
+                      className={`text-2xl font-bold mb-6 text-center ${
+                        isDarkMode ? "text-white" : "text-gray-900"
+                      }`}
+                    >
+                      داده‌های دیفرانسیل شده - سطح {index + 1}
+                    </h2>
+                    <TimeSeriesChart
+                      data={item.data}
+                      results={item.results}
+                      isDarkMode={isDarkMode}
+                    />
+                  </div>
+                  <ResultsDisplay
+                    results={item.results}
+                    isDarkMode={isDarkMode}
+                  />
+                  {index === differencedDataStack.length - 1 && (
+                    <>
+                      <ARParameterEstimationControls
+                        onEstimate={handleEstimateAR}
+                        isDarkMode={isDarkMode}
+                        isEstimating={isEstimatingAR}
+                        selectedOrder={arOrder}
+                        onOrderChange={setArOrder}
+                      />
+                      {item.results.arParameters && (
+                        <ARParametersDisplay
+                          parameters={item.results.arParameters}
+                          isDarkMode={isDarkMode}
+                        />
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
             </>
           )}
         </div>

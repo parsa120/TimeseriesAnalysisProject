@@ -11,6 +11,7 @@ import * as XLSX from "xlsx";
 const API_BASE_URL = "http://localhost:5000/api";
 
 export default function App() {
+  const [arParameters, setArParameters] = useState<ParameterEstimationResult | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [timeSeriesData, setTimeSeriesData] = useState<TimeSeriesData | null>(
@@ -33,6 +34,32 @@ export default function App() {
       document.documentElement.classList.remove("dark");
     }
   }, [isDarkMode]);
+  const handleEstimateARParameters = async () => {
+    if (!timeSeriesData) return;
+  
+    try {
+      const response = await fetch(`${API_BASE_URL}/estimate-ar-parameters`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          values: timeSeriesData.values,
+          order: 3, // or make this configurable
+        }),
+      });
+  
+      if (!response.ok) {
+        throw new Error("خطا در تخمین پارامترهای AR");
+      }
+  
+      const result = await response.json();
+      setArParameters(result);
+    } catch (error) {
+      console.error("Error estimating AR parameters:", error);
+      alert("خطا در تخمین پارامترهای AR");
+    }
+  };
 
   const handleFileUpload = async (file: File) => {
     setUploadedFile(file);
@@ -263,6 +290,7 @@ export default function App() {
           )}
 
           {/* Results */}
+          
           {analysisResults && (
             <>
               <ResultsDisplay
@@ -282,7 +310,12 @@ export default function App() {
                     }
                   `}
                 >
-                  محاسبه مجدد
+                <Button
+      onClick={handleEstimateARParameters}
+      className="..."
+    >
+      تخمین پارامترهای AR
+    </Button>  محاسبه مجدد
                 </Button>
                 <Button
                   onClick={handleDifference}

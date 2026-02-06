@@ -58,6 +58,20 @@ export default function Navbar({ isDarkMode, onToggleDarkMode }: NavbarProps) {
               >
                 تولید MA(1)
               </Link>
+              <Link
+                to="/ar-generation"
+                className={`px-4 py-2 rounded-lg transition-colors ${
+                  isActive("/ar-generation")
+                    ? isDarkMode
+                      ? "bg-gray-800 text-white"
+                      : "bg-gray-100 text-gray-900"
+                    : isDarkMode
+                    ? "text-gray-400 hover:text-gray-200"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                تولید AR(n)
+              </Link>
             </nav>
           </div>
           <Button

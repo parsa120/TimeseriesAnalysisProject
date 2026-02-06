@@ -22,7 +22,9 @@ from timeSeriesAnalysis import (
     TimeSeriesData,
     AnalysisResults,
     estimate_ma_mme,
-    estimate_ma_mse
+    estimate_ma_mse,
+    estimate_ar_mme,  # ADD THIS
+    estimate_ar_mse   # ADD THIS
 )
 from AI_engine import get_ai_feedback
 
@@ -168,7 +170,34 @@ def estimate_ma_parameters_endpoint():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/estimate-ar-parameters', methods=['POST'])
+def estimate_ar_parameters_endpoint():
+    """Estimate AR parameters using MME and MSE methods"""
+    try:
+        data = request.get_json()
+        values = data.get('values', [])
+        max_order = data.get('order', 3)
 
+        if not values:
+            return jsonify({'error': 'No values provided'}), 400
+
+        if not isinstance(max_order, int) or max_order < 1:
+            return jsonify({'error': 'Order must be a positive integer'}), 400
+
+        mme_results = {
+            f'ar{k}': estimate_ar_mme(values, order=k) for k in range(1, max_order + 1)
+        }
+        mse_results = {
+            f'ar{k}': estimate_ar_mse(values, order=k) for k in range(1, max_order + 1)
+        }
+
+        return jsonify({
+            'mme': mme_results,
+            'mse': mse_results
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check endpoint"""

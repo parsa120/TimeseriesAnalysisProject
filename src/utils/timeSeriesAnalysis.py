@@ -243,4 +243,97 @@ def estimate_ma_mse(values: List[float], order: int) -> dict:
 
     return output
 
+def estimate_ar_mme(values: List[float], order: int) -> dict:
+    """
+    Estimates AR(p) parameters using Method of Moments Estimation (Yule-Walker).
+    AR(p) model: X_t = phi_1*X_{t-1} + ... + phi_p*X_{t-p} + e_t
+    
+    Yule-Walker equations: R * phi = r
+    where R[i,j] = rho(|i-j|), r[i] = rho(i+1)
+    """
+    if order < 1:
+        return {"error": "Order must be at least 1"}
+    
+    # Calculate sample autocorrelations for lags 0 to order
+    rho = [calculate_autocorrelation(values, k) for k in range(order + 1)]
+    
+    # Build Yule-Walker matrix R (autocorrelation matrix)
+    # R[i,j] = rho(|i-j|)
+    R = np.zeros((order, order))
+    for i in range(order):
+        for j in range(order):
+            lag = abs(i - j)
+            R[i, j] = rho[lag]
+    
+    # Build right-hand side vector r
+    # r[i] = rho(i+1)
+    r = np.array([rho[k + 1] for k in range(order)])
+    
+    try:
+        # Solve Yule-Walker equations: R * phi = r
+        phi_solution = np.linalg.solve(R, r)
+        
+        result = {}
+        for i in range(order):
+            result[f"phi{i + 1}"] = round(float(phi_solution[i]), 5)
+        
+        # Calculate MSE (variance of residuals)
+        # Var(e_t) = Var(X_t) * (1 - sum(phi_k * rho_k))
+        variance_x = rho[0]  # rho(0) is the variance
+        mse = variance_x * (1 - sum(phi_solution[i] * rho[i + 1] for i in range(order)))
+        result["mse"] = round(float(max(mse, 0)), 5)
+        
+        return result
+    except np.linalg.LinAlgError:
+        return {"error": "Unable to solve Yule-Walker equations"}
 
+
+def estimate_ar_mse(values: List[float], order: int) -> dict:
+    """
+    Estimates AR(p) parameters by minimizing Mean Squared Error.
+    Uses Conditional Sum of Squares (CSS) estimation.
+    """
+    if order < 1:
+        return {"error": "Order must be at least 1"}
+    
+    series = np.array(values, dtype=float)
+    n = len(series)
+    
+    # Initial guess using Yule-Walker
+    initial_yw = estimate_ar_mme(values, order)
+    if "error" in initial_yw:
+        initial_guess = [0.1] * order
+    else:
+        initial_guess = [initial_yw[f"phi{i + 1}"] for i in range(order)]
+    
+    def css_objective(phis):
+        """Calculate conditional sum of squares"""
+        sse = 0.0
+        
+        for t in range(order, n):
+            # Calculate predicted value: sum(phi_j * X_{t-j})
+            predicted = 0.0
+            for j in range(order):
+                predicted += phis[j] * series[t - (j + 1)]
+            
+            # Residual
+            residual = series[t] - predicted
+            sse += residual ** 2
+        
+        return sse
+    
+    # Bounds: AR coefficients typically in (-1, 1)
+    bounds = [(-0.99999, 0.99999)] * order
+    result = minimize(css_objective, initial_guess, bounds=bounds)
+    
+    # Format results
+    optimized_phis = result.x
+    output = {}
+    for i, val in enumerate(optimized_phis):
+        output[f"phi{i + 1}"] = round(float(val), 5)
+    
+    # Calculate MSE
+    mse_value = result.fun / (n - order)
+    output["mse"] = round(float(mse_value), 5)
+    
+    return output
